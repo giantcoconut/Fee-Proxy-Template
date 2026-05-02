@@ -210,6 +210,92 @@ describe("IntuitionFeeProxy", function () {
     });
   });
 
+  describe("Receiver Validation", function () {
+    it("Should revert when createAtoms receiver is not msg.sender", async function () {
+      const { proxy, user, nonAdmin } = await loadFixture(deployFixture);
+
+      const data = [ethers.toUtf8Bytes("ipfs://atom1")];
+      const assets = [0n];
+
+      await expect(
+        proxy.connect(user).createAtoms(nonAdmin.address, data, assets, 1n)
+      ).to.be.revertedWithCustomError(proxy, "IntuitionFeeProxy_InvalidReceiver");
+    });
+
+    it("Should revert when createTriples receiver is not msg.sender", async function () {
+      const { proxy, user, nonAdmin } = await loadFixture(deployFixture);
+
+      const subjectIds = [ethers.zeroPadValue("0x01", 32)];
+      const predicateIds = [ethers.zeroPadValue("0x02", 32)];
+      const objectIds = [ethers.zeroPadValue("0x03", 32)];
+      const assets = [0n];
+
+      await expect(
+        proxy.connect(user).createTriples(nonAdmin.address, subjectIds, predicateIds, objectIds, assets, 1n)
+      ).to.be.revertedWithCustomError(proxy, "IntuitionFeeProxy_InvalidReceiver");
+    });
+
+    it("Should revert when deposit receiver is not msg.sender", async function () {
+      const { proxy, user, nonAdmin } = await loadFixture(deployFixture);
+
+      const termId = ethers.zeroPadValue("0x01", 32);
+
+      await expect(
+        proxy.connect(user).deposit(nonAdmin.address, termId, 1n, 0n)
+      ).to.be.revertedWithCustomError(proxy, "IntuitionFeeProxy_InvalidReceiver");
+    });
+
+    it("Should revert when depositBatch receiver is not msg.sender", async function () {
+      const { proxy, user, nonAdmin } = await loadFixture(deployFixture);
+
+      const termIds = [ethers.zeroPadValue("0x01", 32)];
+      const curveIds = [1n];
+      const assets = [ethers.parseEther("1")];
+      const minShares = [0n];
+
+      await expect(
+        proxy.connect(user).depositBatch(nonAdmin.address, termIds, curveIds, assets, minShares)
+      ).to.be.revertedWithCustomError(proxy, "IntuitionFeeProxy_InvalidReceiver");
+    });
+
+    it("Should allow msg.sender as receiver for all user-facing flows", async function () {
+      const { proxy, mockMultiVault, user } = await loadFixture(deployFixture);
+
+      const atomData = [ethers.toUtf8Bytes("ipfs://atom1")];
+      const atomAssets = [0n];
+      const atomCost = await mockMultiVault.getAtomCost();
+      await expect(
+        proxy.connect(user).createAtoms(user.address, atomData, atomAssets, 1n, { value: atomCost })
+      ).to.not.be.reverted;
+
+      const subjectIds = [ethers.zeroPadValue("0x01", 32)];
+      const predicateIds = [ethers.zeroPadValue("0x02", 32)];
+      const objectIds = [ethers.zeroPadValue("0x03", 32)];
+      const tripleAssets = [0n];
+      const tripleCost = await mockMultiVault.getTripleCost();
+      await expect(
+        proxy.connect(user).createTriples(user.address, subjectIds, predicateIds, objectIds, tripleAssets, 1n, { value: tripleCost })
+      ).to.not.be.reverted;
+
+      const termId = ethers.zeroPadValue("0x04", 32);
+      const depositAmount = ethers.parseEther("1");
+      const depositCost = await proxy.getTotalDepositCost(depositAmount);
+      await expect(
+        proxy.connect(user).deposit(user.address, termId, 1n, 0n, { value: depositCost })
+      ).to.not.be.reverted;
+
+      const termIds = [ethers.zeroPadValue("0x05", 32), ethers.zeroPadValue("0x06", 32)];
+      const curveIds = [1n, 1n];
+      const batchAssets = [ethers.parseEther("0.5"), ethers.parseEther("0.75")];
+      const minShares = [0n, 0n];
+      const totalDeposit = batchAssets[0] + batchAssets[1];
+      const batchFee = await proxy.calculateDepositFee(2n, totalDeposit);
+      await expect(
+        proxy.connect(user).depositBatch(user.address, termIds, curveIds, batchAssets, minShares, { value: totalDeposit + batchFee })
+      ).to.not.be.reverted;
+    });
+  });
+
   describe("Proxy Functions - createAtoms", function () {
     it("Should collect fees on createAtoms (fees based on deposits)", async function () {
       const { proxy, mockMultiVault, user } = await loadFixture(deployFixture);

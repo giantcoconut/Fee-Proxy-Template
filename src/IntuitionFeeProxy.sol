@@ -208,6 +208,8 @@ contract IntuitionFeeProxy {
         uint256[] calldata assets,
         uint256 curveId
     ) external payable returns (bytes32[] memory atomIds) {
+        _validateReceiver(receiver);
+
         if (data.length != assets.length) {
             revert Errors.IntuitionFeeProxy_WrongArrayLengths();
         }
@@ -271,6 +273,8 @@ contract IntuitionFeeProxy {
         uint256[] calldata assets,
         uint256 curveId
     ) external payable returns (bytes32[] memory tripleIds) {
+        _validateReceiver(receiver);
+
         if (subjectIds.length != predicateIds.length ||
             predicateIds.length != objectIds.length ||
             objectIds.length != assets.length) {
@@ -337,6 +341,8 @@ contract IntuitionFeeProxy {
         uint256 curveId,
         uint256 minShares
     ) external payable returns (uint256 shares) {
+        _validateReceiver(receiver);
+
         // Must send more than just the fixed fee
         if (msg.value <= depositFixedFee) {
             revert Errors.IntuitionFeeProxy_InsufficientValue();
@@ -384,6 +390,8 @@ contract IntuitionFeeProxy {
         uint256[] calldata assets,
         uint256[] calldata minShares
     ) external payable returns (uint256[] memory shares) {
+        _validateReceiver(receiver);
+
         if (termIds.length != curveIds.length ||
             curveIds.length != assets.length ||
             assets.length != minShares.length) {
@@ -471,6 +479,14 @@ contract IntuitionFeeProxy {
     }
 
     // ============ Internal Functions ============
+
+    /// @notice Ensure shares can only be minted to the caller in user-facing flows
+    /// @param receiver Address to receive shares
+    function _validateReceiver(address receiver) internal view {
+        if (receiver != msg.sender) {
+            revert Errors.IntuitionFeeProxy_InvalidReceiver();
+        }
+    }
 
     /// @notice Transfer collected fees to recipient
     /// @param amount Amount to transfer

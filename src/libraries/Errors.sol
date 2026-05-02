@@ -27,4 +27,7 @@ library Errors {
 
     /// @notice Fee percentage exceeds maximum allowed (100%)
     error IntuitionFeeProxy_FeePercentageTooHigh();
+
+    /// @notice Receiver must match the caller for user-facing proxy flows
+    error IntuitionFeeProxy_InvalidReceiver();
 }
