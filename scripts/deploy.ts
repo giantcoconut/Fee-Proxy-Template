@@ -56,23 +56,41 @@ async function main() {
   console.log("- Deposit fixed fee:", ethers.formatEther(DEPOSIT_FIXED_FEE), "TRUST");
   console.log("- Deposit percentage:", Number(DEPOSIT_PERCENTAGE) / 100, "%");
 
-  // Deploy IntuitionFeeProxy
-  console.log("\nDeploying IntuitionFeeProxy...");
+  // Deploy implementation and ERC-7936 proxy
+  console.log("\nDeploying IntuitionFeeProxy implementation...");
   const IntuitionFeeProxy = await ethers.getContractFactory("IntuitionFeeProxy");
-  const proxy = await IntuitionFeeProxy.deploy(
+  const implementation = await IntuitionFeeProxy.deploy();
+  await implementation.waitForDeployment();
+  const implementationAddress = await implementation.getAddress();
+
+  const initializationData = IntuitionFeeProxy.interface.encodeFunctionData("initialize", [
     multiVault,
     FEE_RECIPIENT,
     DEPOSIT_FIXED_FEE,
     DEPOSIT_PERCENTAGE,
-    admins
+    admins,
+  ]);
+
+  const initialVersion = ethers.encodeBytes32String("v1");
+  console.log("Implementation address:", implementationAddress);
+  console.log("\nDeploying ERC7936Proxy...");
+
+  const ERC7936Proxy = await ethers.getContractFactory("ERC7936Proxy");
+  const proxy = await ERC7936Proxy.deploy(
+    admin1,
+    initialVersion,
+    implementationAddress,
+    initializationData
   );
 
   await proxy.waitForDeployment();
   const proxyAddress = await proxy.getAddress();
 
   console.log("\n========================================");
-  console.log("IntuitionFeeProxy deployed successfully!");
-  console.log("Contract address:", proxyAddress);
+  console.log("IntuitionFeeProxy V2 deployed successfully!");
+  console.log("Implementation address:", implementationAddress);
+  console.log("ERC-7936 proxy address:", proxyAddress);
+  console.log("Initial version:", ethers.decodeBytes32String(initialVersion));
   console.log("========================================");
 
   // Verify contract on explorer (if not local)
@@ -83,20 +101,18 @@ async function main() {
       await deployTx.wait(5);
     }
 
-    console.log("Verifying contract on explorer...");
+    console.log("Verifying contracts on explorer...");
     try {
       const { run } = await import("hardhat");
       await run("verify:verify", {
-        address: proxyAddress,
-        constructorArguments: [
-          multiVault,
-          FEE_RECIPIENT,
-          DEPOSIT_FIXED_FEE,
-          DEPOSIT_PERCENTAGE,
-          admins,
-        ],
+        address: implementationAddress,
+        constructorArguments: [],
       });
-      console.log("Contract verified successfully!");
+      await run("verify:verify", {
+        address: proxyAddress,
+        constructorArguments: [admin1, initialVersion, implementationAddress, initializationData],
+      });
+      console.log("Contracts verified successfully!");
     } catch (error: any) {
       if (error.message.includes("Already Verified")) {
         console.log("Contract already verified");
@@ -107,16 +123,16 @@ async function main() {
   }
 
   console.log("\nNext steps:");
-  console.log("1. Save this contract address in your frontend config");
+  console.log("1. Save the ERC-7936 proxy address in your frontend config");
   console.log("2. Users must approve the proxy on MultiVault before using it:");
   console.log(`   multiVault.approve("${proxyAddress}", 1) // 1 = DEPOSIT approval`);
-  console.log("3. Update your frontend to call proxy functions instead of MultiVault directly");
+  console.log("3. Future upgrades should register a new version and set it as default through ERC7936Proxy");
 
-  return proxyAddress;
+  return { implementationAddress, proxyAddress };
 }
 
 main()
-  .then((address) => {
+  .then(({ proxyAddress }) => {
     console.log("\nDeployment complete!");
     process.exit(0);
   })

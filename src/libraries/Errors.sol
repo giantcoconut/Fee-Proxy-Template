@@ -42,4 +42,28 @@ library Errors {
 
     /// @notice Requested sweep exceeds non-fee native token balance
     error IntuitionFeeProxy_InsufficientNonFeeBalance();
+
+    /// @notice Caller cannot manage ERC-7936 proxy versions
+    error IntuitionFeeProxy_NotVersionedProxyAdmin();
+
+    /// @notice Version identifier cannot be zero
+    error IntuitionFeeProxy_InvalidVersion();
+
+    /// @notice Implementation address is invalid
+    error IntuitionFeeProxy_InvalidImplementation();
+
+    /// @notice Version is already registered
+    error IntuitionFeeProxy_VersionAlreadyRegistered();
+
+    /// @notice Version is not registered
+    error IntuitionFeeProxy_VersionNotRegistered();
+
+    /// @notice Default version cannot be removed
+    error IntuitionFeeProxy_CannotRemoveDefaultVersion();
+
+    /// @notice Implementation does not use the ERC-1967 implementation slot
+    error IntuitionFeeProxy_UnsupportedProxiableUUID(bytes32 slot);
+
+    /// @notice Contract has already been initialized
+    error IntuitionFeeProxy_AlreadyInitialized();
 }

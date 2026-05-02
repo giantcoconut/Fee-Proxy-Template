@@ -16,10 +16,16 @@ contract IntuitionFeeProxy {
     /// @notice Maximum allowed fee percentage (100%)
     uint256 public constant MAX_FEE_PERCENTAGE = 10000;
 
-    // ============ Immutables ============
+    /// @notice ERC-1822 UUID for the ERC-1967 implementation slot
+    bytes32 public constant PROXIABLE_UUID = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
     /// @notice Reference to the Intuition MultiVault contract
-    IEthMultiVault public immutable ethMultiVault;
+    IEthMultiVault public ethMultiVault;
+
+    // ============ Immutables ============
+
+    /// @notice Implementation self-address for ERC-1822 proxy-context protection
+    address private immutable __self = address(this);
 
     // ============ State Variables ============
 
@@ -39,6 +45,9 @@ contract IntuitionFeeProxy {
 
     /// @notice Mapping of whitelisted admin addresses
     mapping(address => bool) public whitelistedAdmins;
+
+    /// @notice Initialization guard for proxy deployments
+    bool private _initialized;
 
     // ============ Events ============
 
@@ -109,21 +118,35 @@ contract IntuitionFeeProxy {
         _;
     }
 
-    // ============ Constructor ============
+    /// @notice Allows a function to run only once
+    modifier initializer() {
+        if (_initialized) {
+            revert Errors.IntuitionFeeProxy_AlreadyInitialized();
+        }
+        _initialized = true;
+        _;
+    }
 
-    /// @notice Initializes the IntuitionFeeProxy contract
+    // ============ Constructor & Initializer ============
+
+    /// @notice Disables initialization on the implementation contract
+    constructor() {
+        _initialized = true;
+    }
+
+    /// @notice Initializes the IntuitionFeeProxy contract through a proxy
     /// @param _ethMultiVault Address of the Intuition MultiVault contract
     /// @param _feeRecipient Address to receive collected fees
     /// @param _depositFixedFee Initial fixed fee per deposit (in wei)
     /// @param _depositPercentageFee Initial percentage fee for deposits (base 10000)
     /// @param _initialAdmins Array of initial admin addresses to whitelist
-    constructor(
+    function initialize(
         address _ethMultiVault,
         address _feeRecipient,
         uint256 _depositFixedFee,
         uint256 _depositPercentageFee,
         address[] memory _initialAdmins
-    ) {
+    ) external initializer {
         if (_ethMultiVault == address(0)) {
             revert Errors.IntuitionFeeProxy_InvalidMultiVaultAddress();
         }
@@ -273,7 +296,7 @@ contract IntuitionFeeProxy {
         uint256[] calldata assets,
         uint256 curveId
     ) external payable returns (bytes32[] memory atomIds) {
-        _validateReceiver(receiver);
+        _validateReceiver(receiver);    
 
         if (data.length != assets.length) {
             revert Errors.IntuitionFeeProxy_WrongArrayLengths();
@@ -551,6 +574,13 @@ contract IntuitionFeeProxy {
         if (receiver != msg.sender) {
             revert Errors.IntuitionFeeProxy_InvalidReceiver();
         }
+    }
+
+    function proxiableUUID() external view returns (bytes32) {
+        if (address(this) != __self) {
+            revert Errors.IntuitionFeeProxy_InvalidImplementation();
+        }
+        return PROXIABLE_UUID;
     }
 
     /// @notice Track collected proxy fees for later withdrawal

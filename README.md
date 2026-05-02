@@ -6,6 +6,7 @@ A customizable proxy contract for the [Intuition](https://intuition.systems) Mul
 
 - **Deposit-based fees**: Fixed fee per deposit + percentage fee on deposit amounts
 - **Admin system**: Whitelisted admins can update fees and settings
+- **Versioned upgrades**: ERC-7936-style proxy with registered implementations and a default version
 - **Receiver pattern**: Shares are deposited directly to users (requires approval)
 - **Full MultiVault compatibility**: All view functions pass through to MultiVault
 
@@ -85,6 +86,9 @@ npm test
 
 ### 4. Deploy
 
+The deploy script creates an `IntuitionFeeProxy` implementation and an `ERC7936Proxy`.
+Use the proxy address in frontend integrations.
+
 **Testnet (recommended first):**
 ```bash
 npx hardhat run scripts/deploy.ts --network intuition-testnet
@@ -159,6 +163,22 @@ setDepositFixedFee(newFee)
 setDepositPercentageFee(newFee)
 setFeeRecipient(newRecipient)
 setWhitelistedAdmin(admin, status)
+withdrawFees(amount)
+withdrawAllFees()
+sweepNonFeeBalance(recipient, amount)
+```
+
+### Versioned Proxy Functions
+
+```solidity
+registerVersion(version, implementation)
+removeVersion(version)
+setDefaultVersion(version)
+getImplementation(version)
+getDefaultVersion()
+getVersions()
+executeAtVersion(version, data)
+upgradeToVersion(version, implementation, migrationData)
 ```
 
 ### View Functions
@@ -214,7 +234,20 @@ await proxy.createTriples(
 1. **Fee recipient chain**: Ensure `FEE_RECIPIENT` is an address you control on Intuition Network
 2. **Admin keys**: Securely store admin private keys
 3. **Fee limits**: Consider implementing maximum fee limits for user trust
-4. **Upgrades**: This contract is not upgradeable - deploy a new version if needed
+4. **Upgrades**: Upgrade through the ERC-7936 proxy by registering a new implementation version and setting it as the default
+5. **Fee accounting**: Fee withdrawals use explicit accrued-fee accounting; direct native TRUST/tTRUST sent to the proxy is separate non-fee balance
+
+## Migration From V1
+
+Existing V1 deployments were standalone contracts, not proxy deployments, so they cannot be upgraded in place with `upgradeToAndCall`.
+
+Recommended migration path:
+
+1. Read the existing V1 configuration: MultiVault, fee recipient, fixed fee, percentage fee, and admins.
+2. Deploy the V2 `IntuitionFeeProxy` implementation.
+3. Deploy a new `ERC7936Proxy` with version `v1` and initializer data matching the desired configuration.
+4. Update frontend/app configuration to use the new proxy address.
+5. For future changes, deploy a new implementation, register a new version, and set it as the default version through the ERC-7936 proxy.
 
 ## License
 
