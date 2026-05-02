@@ -6,7 +6,7 @@ import {Errors} from "./libraries/Errors.sol";
 
 /// @title IntuitionFeeProxy
 /// @notice Proxy contract for Intuition MultiVault with fee collection
-/// @dev Collects fees on deposits and forwards them to a configurable recipient
+/// @dev Collects fees on deposits and accrues them for withdrawal to a configurable recipient
 contract IntuitionFeeProxy {
     // ============ Constants ============
 
@@ -34,6 +34,9 @@ contract IntuitionFeeProxy {
     /// @dev Default: 500 = 5%
     uint256 public depositPercentageFee;
 
+    /// @notice Total collected proxy fees awaiting withdrawal
+    uint256 public accruedFees;
+
     /// @notice Mapping of whitelisted admin addresses
     mapping(address => bool) public whitelistedAdmins;
 
@@ -58,6 +61,21 @@ contract IntuitionFeeProxy {
         string operation
     );
 
+    /// @notice Emitted when accrued fees are withdrawn to the fee recipient
+    event FeesWithdrawn(
+        address indexed caller,
+        address indexed recipient,
+        uint256 amount,
+        uint256 remainingAccruedFees
+    );
+
+    /// @notice Emitted when non-fee native token balance is swept by an admin
+    event NonFeeBalanceSwept(
+        address indexed admin,
+        address indexed recipient,
+        uint256 amount
+    );
+
     /// @notice Emitted when a transaction is forwarded to MultiVault (debug)
     event TransactionForwarded(
         string operation,
@@ -79,6 +97,14 @@ contract IntuitionFeeProxy {
     modifier onlyWhitelistedAdmin() {
         if (!whitelistedAdmins[msg.sender]) {
             revert Errors.IntuitionFeeProxy_NotWhitelistedAdmin();
+        }
+        _;
+    }
+
+    /// @notice Restricts fee withdrawals to the fee recipient or whitelisted admins
+    modifier onlyFeeWithdrawer() {
+        if (msg.sender != feeRecipient && !whitelistedAdmins[msg.sender]) {
+            revert Errors.IntuitionFeeProxy_NotFeeWithdrawer();
         }
         _;
     }
@@ -193,6 +219,45 @@ contract IntuitionFeeProxy {
         emit AdminWhitelistUpdated(admin, status);
     }
 
+    /// @notice Withdraw accrued proxy fees to the configured fee recipient
+    /// @param amount Amount of accrued fees to withdraw
+    function withdrawFees(uint256 amount) public onlyFeeWithdrawer {
+        _withdrawFees(amount);
+    }
+
+    /// @notice Withdraw all accrued proxy fees to the configured fee recipient
+    function withdrawAllFees() external onlyFeeWithdrawer {
+        _withdrawFees(accruedFees);
+    }
+
+    /// @notice Returns native token balance not accounted for as accrued proxy fees
+    /// @dev This may include direct transfers, accidental sends, or future refunds.
+    function getNonFeeBalance() public view returns (uint256) {
+        uint256 currentBalance = address(this).balance;
+        if (currentBalance <= accruedFees) {
+            return 0;
+        }
+        return currentBalance - accruedFees;
+    }
+
+    /// @notice Sweep native token balance that was not accrued as proxy fees
+    /// @param recipient Address that receives the swept non-fee balance
+    /// @param amount Amount of non-fee native token to sweep
+    function sweepNonFeeBalance(address recipient, uint256 amount) external onlyWhitelistedAdmin {
+        if (recipient == address(0)) {
+            revert Errors.IntuitionFeeProxy_ZeroAddress();
+        }
+        if (amount == 0) {
+            revert Errors.IntuitionFeeProxy_ZeroAmount();
+        }
+        if (amount > getNonFeeBalance()) {
+            revert Errors.IntuitionFeeProxy_InsufficientNonFeeBalance();
+        }
+
+        _sendNative(recipient, amount);
+        emit NonFeeBalanceSwept(msg.sender, recipient, amount);
+    }
+
     // ============ Proxy Functions (Payable) ============
 
     /// @notice Create atoms with fee collection and deposit to receiver
@@ -229,7 +294,7 @@ contract IntuitionFeeProxy {
             revert Errors.IntuitionFeeProxy_InsufficientValue();
         }
 
-        _transferFee(fee);
+        _collectFee(fee);
         emit FeesCollected(msg.sender, fee, "createAtoms");
         emit TransactionForwarded("createAtoms", msg.sender, fee, multiVaultCost, msg.value);
 
@@ -296,7 +361,7 @@ contract IntuitionFeeProxy {
             revert Errors.IntuitionFeeProxy_InsufficientValue();
         }
 
-        _transferFee(fee);
+        _collectFee(fee);
         emit FeesCollected(msg.sender, fee, "createTriples");
         emit TransactionForwarded("createTriples", msg.sender, fee, multiVaultCost, msg.value);
 
@@ -354,7 +419,7 @@ contract IntuitionFeeProxy {
                                    / (FEE_DENOMINATOR + depositPercentageFee);
         uint256 fee = msg.value - multiVaultAmount;
 
-        _transferFee(fee);
+        _collectFee(fee);
         emit FeesCollected(msg.sender, fee, "deposit");
         emit TransactionForwarded("deposit", msg.sender, fee, multiVaultAmount, msg.value);
 
@@ -407,7 +472,7 @@ contract IntuitionFeeProxy {
             revert Errors.IntuitionFeeProxy_InsufficientValue();
         }
 
-        _transferFee(fee);
+        _collectFee(fee);
         emit FeesCollected(msg.sender, fee, "depositBatch");
         emit TransactionForwarded("depositBatch", msg.sender, fee, totalDeposit, msg.value);
 
@@ -488,11 +553,39 @@ contract IntuitionFeeProxy {
         }
     }
 
-    /// @notice Transfer collected fees to recipient
-    /// @param amount Amount to transfer
-    function _transferFee(uint256 amount) internal {
+    /// @notice Track collected proxy fees for later withdrawal
+    /// @param amount Amount to accrue
+    function _collectFee(uint256 amount) internal {
         if (amount > 0) {
-            (bool success, ) = feeRecipient.call{value: amount}("");
+            accruedFees += amount;
+        }
+    }
+
+    /// @notice Withdraw accrued fees to the configured fee recipient
+    /// @param amount Amount to withdraw
+    function _withdrawFees(uint256 amount) internal {
+        if (feeRecipient == address(0)) {
+            revert Errors.IntuitionFeeProxy_ZeroAddress();
+        }
+        if (amount == 0) {
+            revert Errors.IntuitionFeeProxy_ZeroAmount();
+        }
+        if (amount > accruedFees) {
+            revert Errors.IntuitionFeeProxy_InsufficientAccruedFees();
+        }
+
+        accruedFees -= amount;
+        _sendNative(feeRecipient, amount);
+
+        emit FeesWithdrawn(msg.sender, feeRecipient, amount, accruedFees);
+    }
+
+    /// @notice Transfer native token to a recipient
+    /// @param recipient Address that receives the native token
+    /// @param amount Amount to transfer
+    function _sendNative(address recipient, uint256 amount) internal {
+        if (amount > 0) {
+            (bool success, ) = recipient.call{value: amount}("");
             if (!success) {
                 revert Errors.IntuitionFeeProxy_TransferFailed();
             }
@@ -519,6 +612,6 @@ contract IntuitionFeeProxy {
         }
     }
 
-    /// @notice Receive function to accept ETH (for refunds)
+    /// @notice Receive function to accept native TRUST/tTRUST (for refunds or direct transfers)
     receive() external payable {}
 }

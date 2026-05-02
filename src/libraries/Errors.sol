@@ -7,7 +7,7 @@ library Errors {
     /// @notice Caller is not a whitelisted admin
     error IntuitionFeeProxy_NotWhitelistedAdmin();
 
-    /// @notice Insufficient ETH value sent with transaction
+    /// @notice Insufficient native token value sent with transaction
     error IntuitionFeeProxy_InsufficientValue();
 
     /// @notice Invalid multisig address (zero address)
@@ -16,7 +16,7 @@ library Errors {
     /// @notice Invalid MultiVault address (zero address)
     error IntuitionFeeProxy_InvalidMultiVaultAddress();
 
-    /// @notice ETH transfer to fee recipient failed
+    /// @notice Native token transfer failed
     error IntuitionFeeProxy_TransferFailed();
 
     /// @notice Array lengths do not match
@@ -30,4 +30,16 @@ library Errors {
 
     /// @notice Receiver must match the caller for user-facing proxy flows
     error IntuitionFeeProxy_InvalidReceiver();
+
+    /// @notice Caller cannot withdraw accrued fees
+    error IntuitionFeeProxy_NotFeeWithdrawer();
+
+    /// @notice Withdrawal or sweep amount cannot be zero
+    error IntuitionFeeProxy_ZeroAmount();
+
+    /// @notice Requested fee withdrawal exceeds accrued fees
+    error IntuitionFeeProxy_InsufficientAccruedFees();
+
+    /// @notice Requested sweep exceeds non-fee native token balance
+    error IntuitionFeeProxy_InsufficientNonFeeBalance();
 }
