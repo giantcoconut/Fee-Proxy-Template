@@ -1,54 +1,63 @@
-# Intuition Fee Proxy
+# Intuition Fee Proxy V2
 
-A customizable proxy contract for the [Intuition](https://intuition.systems) MultiVault that allows you to collect fees on deposits.
+A customizable fee proxy for the [Intuition](https://intuition.systems) MultiVault. It wraps user-facing MultiVault create/deposit flows, charges configurable deposit-based fees, and routes calls through a versioned proxy deployment.
+
+## Proposed Mission 02 Coverage
+
+This PR proposes the following contract-side V2 work:
+
+| Bounty | Status | Notes |
+| --- | --- | --- |
+| 2A | Implemented | Enforces `receiver == msg.sender` across user-facing create/deposit flows. |
+| 2B | Implemented | Adds ERC-7936-style version routing with upgrade and state-preservation tests. |
+| 2C | Implemented | Tracks accrued fees in-contract and supports controlled withdrawal. |
+| 2D | Planned next | Factory/webapp work planned as the next slice. |
+| 2E | Follow-up | Article/social write-up after implementation stabilizes. |
 
 ## Features
 
-- **Deposit-based fees**: Fixed fee per deposit + percentage fee on deposit amounts
-- **Admin system**: Whitelisted admins can update fees and settings
-- **Versioned upgrades**: ERC-7936-style proxy with registered implementations and a default version
-- **Receiver pattern**: Shares are deposited directly to users (requires approval)
-- **Full MultiVault compatibility**: All view functions pass through to MultiVault
+- **Receiver validation**: `deposit`, `depositBatch`, `createAtoms`, and `createTriples` require the receiver to be the caller.
+- **Deposit-based fees**: Fixed fee per deposit plus percentage fee on deposited amounts.
+- **Explicit fee accounting**: Collected fees accrue inside the proxy until withdrawn by the fee recipient or a whitelisted admin.
+- **Versioned upgrades**: ERC-7936-style proxy with registered implementations, default-version routing, explicit version execution, and ERC-1967 implementation-slot synchronization.
+- **Admin controls**: Whitelisted admins can update fee settings, fee recipient, admin permissions, versions, and non-fee balance sweeps.
+- **MultiVault passthrough**: View helpers expose relevant MultiVault costs and vault state.
 
 ## Fee Structure
 
-All fees are applied **per deposit** (added on top of the deposit amount):
+Fees are charged only on deposit amounts. Atom and triple creation costs from MultiVault are passed through without an additional proxy fee.
 
 | Fee Type | Default | Description |
-|----------|---------|-------------|
-| Fixed fee | 0.1 TRUST | Applied per deposit operation |
-| Percentage fee | 5% | Applied on deposit amounts |
+| --- | --- | --- |
+| Fixed fee | 0.1 TRUST | Applied per non-zero deposit. |
+| Percentage fee | 5% | Applied to the total deposited amount. |
 
-Fees apply to:
-- `deposit()` - direct deposits
-- `createAtoms()` - deposits made during atom creation
-- `createTriples()` - deposits made during triple creation
-- `depositBatch()` - batch deposits
+Fees apply to deposits inside:
+
+- `deposit()`
+- `depositBatch()`
+- `createAtoms()`
+- `createTriples()`
 
 ### Example
 
 For a 10 TRUST deposit:
+
 - Fixed fee: 0.1 TRUST
-- Percentage fee: 0.5 TRUST (5% of 10)
-- **Total fee: 0.6 TRUST**
-- **User sends: 10.6 TRUST**
-- **Deposited to MultiVault: 10 TRUST**
+- Percentage fee: 0.5 TRUST
+- Total fee: 0.6 TRUST
+- User sends: 10.6 TRUST
+- Deposited to MultiVault: 10 TRUST
 
-Note: MultiVault may apply its own internal fees on deposits.
-
-## Prerequisites
-
-- Node.js >= 18
-- npm or yarn
-- A wallet with TRUST tokens for deployment
+MultiVault may still apply its own internal fees.
 
 ## Quick Start
 
-### 1. Clone and Install
+### 1. Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/intuition-fee-proxy.git
-cd intuition-fee-proxy
+git clone https://github.com/YOUR_USERNAME/Fee-Proxy-Template.git
+cd Fee-Proxy-Template
 npm install
 ```
 
@@ -58,24 +67,23 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` with your configuration:
+Set the deployment variables:
 
 ```env
-# Deployer private key (with TRUST tokens)
 PRIVATE_KEY=0x...
 
-# Fee recipient address (receives all collected fees)
-# IMPORTANT: Use an address on Intuition Network, NOT another chain
+# Address controlled on Intuition Network.
 FEE_RECIPIENT=0x...
 
-# Admin addresses (can modify fees and settings)
 ADMIN_1=0x...
-ADMIN_2=0x...  # Optional
+ADMIN_2=0x...
 
-# Fee configuration - ONLY APPLIED ON DEPOSITS
-DEPOSIT_FEE=0.1         # Fixed fee per deposit (in TRUST)
-DEPOSIT_PERCENTAGE=500  # Percentage fee (500 = 5%, base 10000)
+# Deposit fee configuration.
+DEPOSIT_FEE=0.1
+DEPOSIT_PERCENTAGE=500
 ```
+
+`DEPOSIT_PERCENTAGE` uses a 10,000 basis-point denominator, so `500` equals 5%.
 
 ### 3. Compile and Test
 
@@ -84,79 +92,86 @@ npm run compile
 npm test
 ```
 
-### 4. Deploy
+For TypeScript checks:
 
-The deploy script creates an `IntuitionFeeProxy` implementation and an `ERC7936Proxy`.
-Use the proxy address in frontend integrations.
-
-**Testnet (recommended first):**
 ```bash
-npx hardhat run scripts/deploy.ts --network intuition-testnet
+node ./node_modules/typescript/bin/tsc --noEmit --pretty false
 ```
 
-**Mainnet:**
+### 4. Deploy
+
+The deploy script creates an `IntuitionFeeProxy` implementation and an `ERC7936Proxy`. Frontends and integrations should use the proxy address.
+
 ```bash
-npx hardhat run scripts/deploy.ts --network intuition
+npm run deploy:testnet
+```
+
+```bash
+npm run deploy:mainnet
+```
+
+## Contract Flow
+
+1. User approves the proxy on MultiVault for deposits.
+2. User calls a proxy create/deposit function with themselves as `receiver`.
+3. Proxy validates `receiver == msg.sender`.
+4. Proxy calculates the deposit fee and forwards only the MultiVault-required value to MultiVault.
+5. Proxy records the fee in `accruedFees`.
+6. Fee recipient or a whitelisted admin withdraws accrued fees to `feeRecipient`.
+
+## User Approval
+
+Users must approve the proxy on MultiVault before using deposit flows:
+
+```solidity
+multiVault.approve(proxyAddress, 1);
 ```
 
 ## Fee Calculation
 
-```
+```text
 fee = (depositFixedFee * depositCount) + (totalDeposit * depositPercentageFee / 10000)
 ```
 
 Where:
-- `depositCount` = number of **non-zero** deposits in the `assets[]` array
-- `totalDeposit` = sum of all deposit amounts
 
-**Important**: Fees are ONLY charged on deposits, NOT on atom/triple creation itself. The `atomCost` and `tripleCost` from MultiVault are passed through without any additional fee.
+- `depositCount` is the number of non-zero deposits.
+- `totalDeposit` is the sum of all deposit amounts.
 
 ### Examples
 
-**Single deposit of 0.05 TRUST on an existing vault**:
-- Fee = (0.1 × 1) + (0.05 × 5%) = 0.1 + 0.0025 = **0.1025 TRUST**
-- User sends: 0.1525 TRUST
+Single deposit of 0.05 TRUST:
 
-**Creating 1 triple with a 0.1 TRUST deposit on it**:
-- Triple creation cost: ~0.0004 TRUST (paid to MultiVault, no fee)
-- Deposit fee: (0.1 × 1) + (0.1 × 5%) = 0.1 + 0.005 = **0.105 TRUST**
-- User sends: tripleCost + 0.1 + 0.105 = ~0.2054 TRUST
+- Fee = `(0.1 * 1) + (0.05 * 5%)`
+- Fee = `0.1025 TRUST`
+- User sends `0.1525 TRUST`
+- MultiVault receives `0.05 TRUST`
 
+Creating one triple with a 0.1 TRUST deposit:
 
-**Batch deposit on 3 vaults** (assets = [0.01, 0.05, 0.1]):
-- Deposit fee: (0.1 × 3) + (0.16 × 5%) = 0.3 + 0.008 = **0.308 TRUST**
-- User sends: 0.16 + 0.308 = 0.468 TRUST
+- Triple creation cost is paid to MultiVault with no proxy fee.
+- Deposit fee = `(0.1 * 1) + (0.1 * 5%)`
+- Deposit fee = `0.105 TRUST`
+- User sends `tripleCost + 0.1 + 0.105`
 
-## User Approval Flow
+Batch deposit on three vaults with assets `[0.01, 0.05, 0.1]`:
 
-Users must approve the proxy on MultiVault before using it:
+- Deposit fee = `(0.1 * 3) + (0.16 * 5%)`
+- Deposit fee = `0.308 TRUST`
+- User sends `0.468 TRUST`
 
-```solidity
-// User calls this once on MultiVault
-multiVault.approve(proxyAddress, 1); // 1 = DEPOSIT approval
-```
-
-This allows the proxy to deposit shares on behalf of the user.
-
-## Contract Functions
-
-### User Functions
+## User Functions
 
 ```solidity
-// Create atoms with fee on deposits
-createAtoms(receiver, data[], assets[], curveId) payable
-
-// Create triples with fee on deposits
-createTriples(receiver, subjectIds[], predicateIds[], objectIds[], assets[], curveId) payable
-
-// Deposit with fee
-deposit(receiver, termId, curveId, minShares) payable
-
-// Batch deposit with fee
-depositBatch(receiver, termIds[], curveIds[], assets[], minShares[]) payable
+createAtoms(receiver, data, assets, curveId)
+createTriples(receiver, subjectIds, predicateIds, objectIds, assets, curveId)
+deposit(receiver, termId, curveId, minShares)
+depositBatch(receiver, termIds, curveIds, assets, minShares)
 ```
 
-### Admin Functions
+All user-facing functions are payable and require `receiver == msg.sender`.
+
+## Admin Functions
 
 ```solidity
 setDepositFixedFee(newFee)
@@ -168,7 +183,9 @@ withdrawAllFees()
 sweepNonFeeBalance(recipient, amount)
 ```
 
-### Versioned Proxy Functions
+`withdrawFees` and `withdrawAllFees` always send accrued fees to `feeRecipient`. Direct native TRUST/tTRUST sent to the proxy is treated as non-fee balance and can only be swept separately.
+
+## Versioned Proxy Functions
 
 ```solidity
 registerVersion(version, implementation)
@@ -179,63 +196,68 @@ getDefaultVersion()
 getVersions()
 executeAtVersion(version, data)
 upgradeToVersion(version, implementation, migrationData)
+versionedProxyAdmin()
+transferVersionedProxyAdmin(newAdmin)
+getActiveImplementation()
 ```
 
-### View Functions
+The proxy keeps ERC-7936-style default-version routing synchronized with the ERC-1967 implementation slot. After a default-version upgrade, regular calls route through the new default implementation while preserving proxy storage.
+
+## View Functions
 
 ```solidity
-// Calculate fee for deposits
 calculateDepositFee(depositCount, totalDeposit)
-
-// Get total cost including fees
 getTotalDepositCost(depositAmount)
 getTotalCreationCost(depositCount, totalDeposit, multiVaultCost)
-
-// Calculate MultiVault amount from msg.value
 getMultiVaultAmountFromValue(msgValue)
+getAtomCost()
+getTripleCost()
+isTermCreated(termId)
+getShares(user, termId, curveId)
 ```
 
 ## Network Configuration
 
 | Network | Chain ID | MultiVault Address |
-|---------|----------|-------------------|
+| --- | --- | --- |
 | Intuition Mainnet | 1155 | `0x6E35cF57A41fA15eA0EaE9C33e751b01A784Fe7e` |
 | Intuition Testnet | 13579 | `0x2Ece8D4dEdcB9918A398528f3fa4688b1d2CAB91` |
 
 ## Frontend Integration
 
 ```typescript
-// For a single deposit
-const depositAmount = parseEther("10");
+const depositAmount = ethers.parseEther("10");
 const totalCost = await proxy.getTotalDepositCost(depositAmount);
-await proxy.deposit(userAddress, termId, curveId, 0, { value: totalCost });
 
-// For createTriples with deposits
+await proxy.deposit(userAddress, termId, curveId, 0, {
+  value: totalCost,
+});
+```
+
+For create flows, include the MultiVault creation cost plus the proxy fee:
+
+```typescript
 const tripleCost = await proxy.getTripleCost();
-const depositAmounts = [parseEther("1"), parseEther("1")]; // 2 triples
-const depositCount = 2; // non-zero deposits
-const totalDeposit = parseEther("2");
-const multiVaultCost = (tripleCost * 2n) + totalDeposit;
-const totalCost = await proxy.getTotalCreationCost(depositCount, totalDeposit, multiVaultCost);
+const assets = [ethers.parseEther("1"), ethers.parseEther("1")];
+const depositCount = 2;
+const totalDeposit = assets.reduce((sum, amount) => sum + amount, 0n);
+const multiVaultCost = tripleCost * 2n + totalDeposit;
+const totalCost = await proxy.getTotalCreationCost(
+  depositCount,
+  totalDeposit,
+  multiVaultCost
+);
 
 await proxy.createTriples(
   userAddress,
   subjectIds,
   predicateIds,
   objectIds,
-  depositAmounts,
+  assets,
   curveId,
   { value: totalCost }
 );
 ```
-
-## Security Considerations
-
-1. **Fee recipient chain**: Ensure `FEE_RECIPIENT` is an address you control on Intuition Network
-2. **Admin keys**: Securely store admin private keys
-3. **Fee limits**: Consider implementing maximum fee limits for user trust
-4. **Upgrades**: Upgrade through the ERC-7936 proxy by registering a new implementation version and setting it as the default
-5. **Fee accounting**: Fee withdrawals use explicit accrued-fee accounting; direct native TRUST/tTRUST sent to the proxy is separate non-fee balance
 
 ## Migration From V1
 
@@ -248,6 +270,26 @@ Recommended migration path:
 3. Deploy a new `ERC7936Proxy` with version `v1` and initializer data matching the desired configuration.
 4. Update frontend/app configuration to use the new proxy address.
 5. For future changes, deploy a new implementation, register a new version, and set it as the default version through the ERC-7936 proxy.
+
+## Security Notes
+
+- Use a fee recipient address controlled on the target Intuition network.
+- Keep deployer, admin, and proxy admin keys separate where possible.
+- Review fee settings before deployment; percentage fees are bounded by contract validation.
+- Use `withdrawFees` or `withdrawAllFees` for accrued protocol fees.
+- Use `sweepNonFeeBalance` only for native TRUST/tTRUST that was sent directly to the proxy and is not part of `accruedFees`.
+- Register and test a new implementation version before making it the default version.
+
+## Validation
+
+Current local validation for this branch:
+
+```text
+npm test
+58 passing
+
+node ./node_modules/typescript/bin/tsc --noEmit --pretty false
+```
 
 ## License
 
